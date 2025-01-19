@@ -10,7 +10,7 @@ use bevy_app::{App, Plugin};
 use bevy_ecs::{
     component::Component,
     prelude::*,
-    query::{QueryFilter, QueryItem, ReadOnlyQueryData},
+    query::{ArchetypeFilter, QueryFilter, QueryItem, ReadOnlyQueryData},
 };
 use core::{marker::PhantomData, ops::Deref};
 
@@ -71,22 +71,24 @@ pub trait ExtractComponent: Component {
 ///
 /// Therefore it sets up the [`RenderSet::Prepare`] step
 /// for the specified [`ExtractComponent`].
-pub struct UniformComponentPlugin<C>(PhantomData<fn() -> C>);
+pub struct UniformComponentPlugin<C, F = ()>(PhantomData<fn() -> (C, F)>);
 
-impl<C> Default for UniformComponentPlugin<C> {
+impl<C, F> Default for UniformComponentPlugin<C, F> {
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<C: Component + ShaderType + WriteInto + Clone> Plugin for UniformComponentPlugin<C> {
+impl<C: Component + ShaderType + WriteInto + Clone, F: QueryFilter + ArchetypeFilter + 'static>
+    Plugin for UniformComponentPlugin<C, F>
+{
     fn build(&self, app: &mut App) {
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .insert_resource(ComponentUniforms::<C>::default())
                 .add_systems(
                     Render,
-                    prepare_uniform_components::<C>.in_set(RenderSet::PrepareResources),
+                    prepare_uniform_components::<C, F>.in_set(RenderSet::PrepareResources),
                 );
         }
     }
@@ -124,14 +126,15 @@ impl<C: Component + ShaderType> Default for ComponentUniforms<C> {
 
 /// This system prepares all components of the corresponding component type.
 /// They are transformed into uniforms and stored in the [`ComponentUniforms`] resource.
-fn prepare_uniform_components<C>(
+fn prepare_uniform_components<C, F>(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut component_uniforms: ResMut<ComponentUniforms<C>>,
-    components: Query<(Entity, &C)>,
+    components: Query<(Entity, &C), F>,
 ) where
     C: Component + ShaderType + WriteInto + Clone,
+    F: QueryFilter + ArchetypeFilter,
 {
     let components_iter = components.iter();
     let count = components_iter.len();
